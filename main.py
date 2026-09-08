@@ -46,21 +46,18 @@ async def home():
         <div class="container">
             <h2>Freecharge Portal</h2>
             
-            <!-- Step 1: Mobile -->
             <div id="step-mobile" class="form-group">
                 <label>Mobile Number</label>
                 <input type="tel" id="mobile" placeholder="Enter 10 digit number" maxlength="10">
                 <button onclick="sendOtp()">Send OTP</button>
             </div>
 
-            <!-- Step 2: OTP Verification -->
             <div id="step-otp" class="form-group hidden">
                 <label>Enter OTP</label>
                 <input type="text" id="otp" placeholder="Enter OTP received">
                 <button onclick="verifyOtp()">Verify OTP</button>
             </div>
 
-            <!-- Step 3: Success & Show History Button -->
             <div id="step-history" class="hidden">
                 <div class="success-msg">Login Successful! 🎉</div>
                 <button onclick="getHistory()" style="background: #28a745;">Show History</button>
@@ -171,28 +168,44 @@ async def send_otp(data: SendOtpRequest):
       )
       page = await context.new_page()
 
+      # Speed up by blocking unnecessary heavy resources (Images, CSS, Fonts)
+      await page.route(
+          "**/*",
+          lambda route: route.abort()
+          if route.request.resource_type in ["image", "stylesheet", "font"]
+          else route.continue_(),
+      )
+
       await page.goto(
           "https://www.freecharge.in/services",
           wait_until="domcontentloaded",
-          timeout=60000,
+          timeout=30000,
       )
-      await asyncio.sleep(3)
+      await asyncio.sleep(1)
 
       try:
         await page.locator("text=Login").first.click(force=True)
-        await asyncio.sleep(2)
+        await asyncio.sleep(1)
       except:
         pass
 
       input_field = page.locator("input[type='tel']").first
-      await input_field.wait_for(state="visible", timeout=10000)
+      await input_field.wait_for(state="visible", timeout=8000)
       await input_field.fill(mobile)
 
       get_otp_btn = page.locator("text=Get OTP").first
       if await get_otp_btn.is_visible():
         await get_otp_btn.click(force=True)
 
-      await asyncio.sleep(4)
+      # Check instantly if rate limit error banner appears
+      await asyncio.sleep(2)
+      error_banner = page.locator(
+          "text=exceeded the limit, text=try again after"
+      ).first
+      if await error_banner.is_visible():
+        error_msg = await error_banner.inner_text()
+        raise HTTPException(status_code=400, detail=error_msg)
+
       storage_state = await context.storage_state()
       user_sessions[mobile] = {"storage_state": storage_state}
 
@@ -202,6 +215,8 @@ async def send_otp(data: SendOtpRequest):
         "status": "success",
         "message": f"OTP successfully sent to {mobile}",
     }
+  except HTTPException as he:
+    raise he
   except Exception as e:
     raise HTTPException(status_code=500, detail=str(e))
 
@@ -230,14 +245,20 @@ async def verify_otp(data: VerifyOtpRequest):
       )
       page = await context.new_page()
 
+      await page.route(
+          "**/*",
+          lambda route: route.abort()
+          if route.request.resource_type in ["image", "stylesheet", "font"]
+          else route.continue_(),
+      )
+
       await page.goto(
           "https://www.freecharge.in/services",
           wait_until="domcontentloaded",
-          timeout=60000,
+          timeout=30000,
       )
-      await asyncio.sleep(4)
+      await asyncio.sleep(2)
 
-      # Safely handle OTP inputs without triggering hard timeouts
       otp_inputs = page.locator("input[type='tel']")
       count = await otp_inputs.count()
 
@@ -245,13 +266,13 @@ async def verify_otp(data: VerifyOtpRequest):
         for i, digit in enumerate(otp):
           if i < count:
             await otp_inputs.nth(i).fill(digit)
-            await asyncio.sleep(0.3)
+            await asyncio.sleep(0.2)
       else:
         input_field = page.locator("input").first
         if await input_field.is_visible():
           await input_field.fill(otp)
 
-      await asyncio.sleep(5)
+      await asyncio.sleep(3)
 
       updated_state = await context.storage_state()
       user_sessions[mobile]["storage_state"] = updated_state
@@ -285,21 +306,28 @@ async def get_transactions(data: VerifyOtpRequest):
       )
       page = await context.new_page()
 
+      await page.route(
+          "**/*",
+          lambda route: route.abort()
+          if route.request.resource_type in ["image", "stylesheet", "font"]
+          else route.continue_(),
+      )
+
       await page.goto(
           "https://www.freecharge.in/services",
           wait_until="domcontentloaded",
-          timeout=60000,
+          timeout=30000,
       )
-      await asyncio.sleep(4)
+      await asyncio.sleep(2)
 
       hamburger = page.locator(
           "xpath=//header//div[contains(@class, 'flex')]//button | //div[contains(text(), '☰')]"
       ).first
       await hamburger.click(force=True)
-      await asyncio.sleep(2)
+      await asyncio.sleep(1)
 
       await page.locator("text=My Transactions").click(force=True)
-      await asyncio.sleep(4)
+      await asyncio.sleep(2)
 
       detailed_transactions = []
       items = page.locator("div[class*='transaction'], a[class*='transaction']")
@@ -311,14 +339,14 @@ async def get_transactions(data: VerifyOtpRequest):
             "https://www.freecharge.in/transactions-history",
             wait_until="domcontentloaded",
         )
-        await asyncio.sleep(2)
+        await asyncio.sleep(1)
 
         current_items = page.locator(
             "div[class*='transaction'], a[class*='transaction']"
         )
         if await current_items.count() > i:
           await current_items.nth(i).click(force=True)
-          await asyncio.sleep(3)
+          await asyncio.sleep(2)
 
           try:
             amount = await page.locator("text=₹").first.inner_text()
@@ -346,4 +374,4 @@ async def get_transactions(data: VerifyOtpRequest):
 
   except Exception as e:
     raise HTTPException(status_code=500, detail=str(e))
-    
+  
