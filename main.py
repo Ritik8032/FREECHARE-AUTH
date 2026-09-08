@@ -168,11 +168,11 @@ async def send_otp(data: SendOtpRequest):
       )
       page = await context.new_page()
 
-      # Speed up by blocking unnecessary heavy resources (Images, CSS, Fonts)
+      # Only block images and fonts to keep site rendering fast and working properly
       await page.route(
           "**/*",
           lambda route: route.abort()
-          if route.request.resource_type in ["image", "stylesheet", "font"]
+          if route.request.resource_type in ["image", "font"]
           else route.continue_(),
       )
 
@@ -190,14 +190,13 @@ async def send_otp(data: SendOtpRequest):
         pass
 
       input_field = page.locator("input[type='tel']").first
-      await input_field.wait_for(state="visible", timeout=8000)
+      await input_field.wait_for(state="visible", timeout=10000)
       await input_field.fill(mobile)
 
       get_otp_btn = page.locator("text=Get OTP").first
       if await get_otp_btn.is_visible():
         await get_otp_btn.click(force=True)
 
-      # Check instantly if rate limit error banner appears
       await asyncio.sleep(2)
       error_banner = page.locator(
           "text=exceeded the limit, text=try again after"
@@ -248,7 +247,7 @@ async def verify_otp(data: VerifyOtpRequest):
       await page.route(
           "**/*",
           lambda route: route.abort()
-          if route.request.resource_type in ["image", "stylesheet", "font"]
+          if route.request.resource_type in ["image", "font"]
           else route.continue_(),
       )
 
@@ -309,7 +308,7 @@ async def get_transactions(data: VerifyOtpRequest):
       await page.route(
           "**/*",
           lambda route: route.abort()
-          if route.request.resource_type in ["image", "stylesheet", "font"]
+          if route.request.resource_type in ["image", "font"]
           else route.continue_(),
       )
 
@@ -349,19 +348,33 @@ async def get_transactions(data: VerifyOtpRequest):
           await asyncio.sleep(2)
 
           try:
-            amount = await page.locator("text=₹").first.inner_text()
-            status = await page.locator(
-                "text=Failed, text=Success"
-            ).first.inner_text()
-            date_time = await page.locator("text=2026").first.inner_text()
-            utr = await page.locator("text=OCMR").first.inner_text()
+            amount = page.locator("text=₹").first
+            status = page.locator("text=Failed, text=Success").first
+            date_time = page.locator("text=2026").first
+            utr = page.locator("text=OCMR").first
 
             detailed_transactions.append({
                 "index": i + 1,
-                "amount": amount,
-                "status": status,
-                "date_time": date_time,
-                "utr_or_tx_id": utr,
+                "amount": (
+                    await amount.inner_text()
+                    if await amount.count() > 0
+                    else "N/A"
+                ),
+                "status": (
+                    await status.inner_text()
+                    if await status.count() > 0
+                    else "N/A"
+                ),
+                "date_time": (
+                    await date_time.inner_text()
+                    if await date_time.count() > 0
+                    else "N/A"
+                ),
+                "utr_or_tx_id": (
+                    await utr.inner_text()
+                    if await utr.count() > 0
+                    else "N/A"
+                ),
             })
           except Exception:
             detailed_transactions.append({
