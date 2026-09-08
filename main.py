@@ -45,14 +45,12 @@ async def home():
         <div class="container">
             <h2>Freecharge Transactions</h2>
             
-            <!-- Step 1: Mobile Number -->
             <div id="step-mobile" class="form-group">
                 <label>Mobile Number</label>
                 <input type="tel" id="mobile" placeholder="Enter 10 digit number" maxlength="10">
                 <button onclick="sendOtp()">Send OTP</button>
             </div>
 
-            <!-- Step 2: OTP Verification -->
             <div id="step-otp" class="form-group hidden">
                 <label>Enter OTP</label>
                 <input type="text" id="otp" placeholder="Enter OTP received">
@@ -60,8 +58,6 @@ async def home():
             </div>
 
             <div id="loader">Processing in background, please wait...</div>
-
-            <!-- Results -->
             <div id="results"></div>
         </div>
 
@@ -172,8 +168,10 @@ async def send_otp(data: SendOtpRequest):
 
       get_otp_btn = page.locator("text=Get OTP").first
       if await get_otp_btn.is_visible():
-        await get_otp_btn.click()
+        # Force click lagaya hai taaki loader click ko intercept na kare
+        await get_otp_btn.click(force=True)
 
+      await asyncio.sleep(3)
       cookies = await context.cookies()
       user_sessions[mobile] = {"cookies": cookies}
 
@@ -232,7 +230,9 @@ async def get_transactions(data: VerifyOtpRequest):
       input_field = page.locator("input[type='tel']").first
       if await input_field.is_visible():
         await input_field.fill(mobile)
-        await page.locator("text=Get OTP").first.click()
+        get_otp_btn = page.locator("text=Get OTP").first
+        if await get_otp_btn.is_visible():
+          await get_otp_btn.click(force=True)
         await asyncio.sleep(3)
 
       otp_inputs = page.locator("input[type='tel']")
@@ -249,10 +249,10 @@ async def get_transactions(data: VerifyOtpRequest):
       hamburger = page.locator(
           "xpath=//header//div[contains(@class, 'flex')]//button | //div[contains(text(), '☰')]"
       ).first
-      await hamburger.click()
+      await hamburger.click(force=True)
       await asyncio.sleep(2)
 
-      await page.locator("text=My Transactions").click()
+      await page.locator("text=My Transactions").click(force=True)
       await asyncio.sleep(4)
 
       detailed_transactions = []
@@ -271,7 +271,7 @@ async def get_transactions(data: VerifyOtpRequest):
             "div[class*='transaction'], a[class*='transaction']"
         )
         if await current_items.count() > i:
-          await current_items.nth(i).click()
+          await current_items.nth(i).click(force=True)
           await asyncio.sleep(3)
 
           try:
@@ -300,4 +300,3 @@ async def get_transactions(data: VerifyOtpRequest):
 
   except Exception as e:
     raise HTTPException(status_code=500, detail=str(e))
-        
