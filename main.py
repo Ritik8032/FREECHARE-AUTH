@@ -131,14 +131,18 @@ async def home():
 
                 if(res.ok) {
                     let html = "<h3>Last Transactions:</h3>";
-                    data.last_5_transactions.forEach(tx => {
-                        html += `<div class="tx-card">
-                            <b>Amount:</b> ${tx.amount || 'N/A'}<br>
-                            <b>Status:</b> ${tx.status || 'N/A'}<br>
-                            <b>Date/Time:</b> ${tx.date_time || 'N/A'}<br>
-                            <b>UTR/ID:</b> ${tx.utr_or_tx_id || 'N/A'}
-                        </div>`;
-                    });
+                    if(data.last_5_transactions.length === 0) {
+                        html += "<p>No transactions found or layout changed.</p>";
+                    } else {
+                        data.last_5_transactions.forEach(tx => {
+                            html += `<div class="tx-card">
+                                <b>Amount:</b> ${tx.amount || 'N/A'}<br>
+                                <b>Status:</b> ${tx.status || 'N/A'}<br>
+                                <b>Date/Time:</b> ${tx.date_time || 'N/A'}<br>
+                                <b>UTR/ID:</b> ${tx.utr_or_tx_id || 'N/A'}
+                            </div>`;
+                        });
+                    }
                     document.getElementById("results").innerHTML = html;
                 } else {
                     alert("Error: " + data.detail);
@@ -311,7 +315,6 @@ async def get_transactions(data: VerifyOtpRequest):
           else route.continue_(),
       )
 
-      # Directly jump to transactions history page using session
       await page.goto(
           "https://www.freecharge.in/transactions-history",
           wait_until="domcontentloaded",
@@ -320,9 +323,10 @@ async def get_transactions(data: VerifyOtpRequest):
       await asyncio.sleep(3)
 
       detailed_transactions = []
+      # Broadened selector to catch list items, cards, or transaction rows
       items = page.locator(
           "div[class*='transaction'], a[class*='transaction'],"
-          " div[class*='card']"
+          " div[class*='card'], li, div[class*='history']"
       )
       total_items = await items.count()
       limit = min(5, total_items)
@@ -331,47 +335,53 @@ async def get_transactions(data: VerifyOtpRequest):
         try:
           current_items = page.locator(
               "div[class*='transaction'], a[class*='transaction'],"
-              " div[class*='card']"
+              " div[class*='card'], li, div[class*='history']"
           )
           if await current_items.count() > i:
-            await current_items.nth(i).click(force=True)
-            await asyncio.sleep(2)
+            target_item = current_items.nth(i)
+            text_content = await target_item.inner_text()
 
-            amount = page.locator("text=₹").first
-            status = page.locator("text=Failed, text=Success").first
-            date_time = page.locator("text=2026").first
-            utr = page.locator("text=OCMR").first
+            # Filter items that actually look like transactions (contain currency symbol or numbers)
+            if "₹" in text_content or "Paid" in text_content or "Success" in text_content:
+              await target_item.click(force=True)
+              await asyncio.sleep(2)
 
-            detailed_transactions.append({
-                "index": i + 1,
-                "amount": (
-                    await amount.inner_text()
-                    if await amount.count() > 0
-                    else "N/A"
-                ),
-                "status": (
-                    await status.inner_text()
-                    if await status.count() > 0
-                    else "N/A"
-                ),
-                "date_time": (
-                    await date_time.inner_text()
-                    if await date_time.count() > 0
-                    else "N/A"
-                ),
-                "utr_or_tx_id": (
-                    await utr.inner_text()
-                    if await utr.count() > 0
-                    else "N/A"
-                ),
-            })
+              amount = page.locator("text=₹").first
+              status = page.locator("text=Failed, text=Success").first
+              date_time = page.locator("text=2026").first
+              utr = page.locator("text=OCMR").first
 
-            await page.go_back()
-            await asyncio.sleep(1.5)
+              detailed_transactions.append({
+                  "index": len(detailed_transactions) + 1,
+                  "amount": (
+                      await amount.inner_text()
+                      if await amount.count() > 0
+                      else "N/A"
+                  ),
+                  "status": (
+                      await status.inner_text()
+                      if await status.count() > 0
+                      else "N/A"
+                  ),
+                  "date_time": (
+                      await date_time.inner_text()
+                      if await date_time.count() > 0
+                      else "N/A"
+                  ),
+                  "utr_or_tx_id": (
+                      await utr.inner_text()
+                      if await utr.count() > 0
+                      else "N/A"
+                  ),
+              })
+
+              await page.goto(
+                  "https://www.freecharge.in/transactions-history",
+                  wait_until="domcontentloaded",
+              )
+              await asyncio.sleep(1.5)
         except Exception:
-          detailed_transactions.append(
-              {"index": i + 1, "error": "Could not parse full details"}
-          )
+          continue
 
       await browser.close()
       return {"status": "success", "last_5_transactions": detailed_transactions}
