@@ -26,7 +26,7 @@ async def home():
     <head>
         <meta charset="UTF-8">
         <meta name="viewport" content="width=device-width, initial-scale=1.0">
-        <title>Freecharge Transaction Viewer</title>
+        <title>Freecharge Login & Transactions</title>
         <style>
             body { font-family: Arial, sans-serif; background: #f4f4f9; margin: 0; padding: 20px; display: flex; justify-content: center; }
             .container { background: #fff; padding: 20px; border-radius: 8px; box-shadow: 0 4px 10px rgba(0,0,0,0.1); width: 100%; max-width: 400px; }
@@ -37,27 +37,36 @@ async def home():
             button { width: 100%; background: #ff6600; color: white; border: none; padding: 10px; border-radius: 4px; font-size: 16px; cursor: pointer; margin-top: 10px; }
             button:hover { background: #e05b00; }
             .hidden { display: none; }
+            .success-msg { color: green; font-weight: bold; text-align: center; margin-bottom: 15px; }
             .tx-card { background: #fff8f5; border: 1px solid #ffccb3; padding: 10px; margin-top: 10px; border-radius: 4px; font-size: 14px; }
             #loader { text-align: center; color: #666; margin-top: 10px; display: none; }
         </style>
     </head>
     <body>
         <div class="container">
-            <h2>Freecharge Transactions</h2>
+            <h2>Freecharge Portal</h2>
             
+            <!-- Step 1: Mobile -->
             <div id="step-mobile" class="form-group">
                 <label>Mobile Number</label>
                 <input type="tel" id="mobile" placeholder="Enter 10 digit number" maxlength="10">
                 <button onclick="sendOtp()">Send OTP</button>
             </div>
 
+            <!-- Step 2: OTP Verification -->
             <div id="step-otp" class="form-group hidden">
                 <label>Enter OTP</label>
                 <input type="text" id="otp" placeholder="Enter OTP received">
-                <button onclick="getTransactions()">Verify & Get Transactions</button>
+                <button onclick="verifyOtp()">Verify OTP</button>
             </div>
 
-            <div id="loader">Processing in background, please wait...</div>
+            <!-- Step 3: Success & Show History Button -->
+            <div id="step-history" class="hidden">
+                <div class="success-msg">Login Successful! 🎉</div>
+                <button onclick="getHistory()" style="background: #28a745;">Show History</button>
+            </div>
+
+            <div id="loader">Processing, please wait...</div>
             <div id="results"></div>
         </div>
 
@@ -72,14 +81,12 @@ async def home():
                 }
 
                 document.getElementById("loader").style.display = "block";
-
                 let res = await fetch("/send-otp", {
                     method: "POST",
                     headers: { "Content-Type": "application/json" },
                     body: JSON.stringify({ mobile: currentMobile })
                 });
                 let data = await res.json();
-                
                 document.getElementById("loader").style.display = "none";
 
                 if(res.ok) {
@@ -91,7 +98,7 @@ async def home():
                 }
             }
 
-            async function getTransactions() {
+            async function verifyOtp() {
                 let otp = document.getElementById("otp").value;
                 if(!otp) {
                     alert("Please enter the OTP");
@@ -99,15 +106,30 @@ async def home():
                 }
 
                 document.getElementById("loader").style.display = "block";
-                document.getElementById("results").innerHTML = "";
-
-                let res = await fetch("/get-transactions", {
+                let res = await fetch("/verify-otp", {
                     method: "POST",
                     headers: { "Content-Type": "application/json" },
                     body: JSON.stringify({ mobile: currentMobile, otp: otp })
                 });
                 let data = await res.json();
+                document.getElementById("loader").style.display = "none";
 
+                if(res.ok) {
+                    document.getElementById("step-otp").classList.add("hidden");
+                    document.getElementById("step-history").classList.remove("hidden");
+                } else {
+                    alert("Verification Failed: " + data.detail);
+                }
+            }
+
+            async function getHistory() {
+                document.getElementById("loader").style.display = "block";
+                let res = await fetch("/get-transactions", {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({ mobile: currentMobile, otp: "" })
+                });
+                let data = await res.json();
                 document.getElementById("loader").style.display = "none";
 
                 if(res.ok) {
@@ -157,7 +179,7 @@ async def send_otp(data: SendOtpRequest):
       await asyncio.sleep(3)
 
       try:
-        await page.locator("text=Login").first.click()
+        await page.locator("text=Login").first.click(force=True)
         await asyncio.sleep(2)
       except:
         pass
@@ -168,12 +190,12 @@ async def send_otp(data: SendOtpRequest):
 
       get_otp_btn = page.locator("text=Get OTP").first
       if await get_otp_btn.is_visible():
-        # Force click lagaya hai taaki loader click ko intercept na kare
         await get_otp_btn.click(force=True)
 
-      await asyncio.sleep(3)
-      cookies = await context.cookies()
-      user_sessions[mobile] = {"cookies": cookies}
+      await asyncio.sleep(4)
+      # Save browser state/storage instead of just cookies for proper session restore
+      storage_state = await context.storage_state()
+      user_sessions[mobile] = {"storage_state": storage_state}
 
       await browser.close()
 
@@ -181,21 +203,17 @@ async def send_otp(data: SendOtpRequest):
         "status": "success",
         "message": f"OTP successfully sent to {mobile}",
     }
-
   except Exception as e:
     raise HTTPException(status_code=500, detail=str(e))
 
 
-@app.post("/get-transactions")
-async def get_transactions(data: VerifyOtpRequest):
+@app.post("/verify-otp")
+async def verify_otp(data: VerifyOtpRequest):
   mobile = data.mobile
   otp = data.otp
 
   if mobile not in user_sessions:
-    raise HTTPException(
-        status_code=400,
-        detail="Session not found. Please request OTP first.",
-    )
+    raise HTTPException(status_code=400, detail="Session expired. Start again.")
 
   try:
     async with async_playwright() as p:
@@ -203,6 +221,7 @@ async def get_transactions(data: VerifyOtpRequest):
           headless=True, args=["--no-sandbox", "--disable-setuid-sandbox"]
       )
       context = await browser.new_context(
+          storage_state=user_sessions[mobile]["storage_state"],
           user_agent=(
               "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML,"
               " like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36"
@@ -210,8 +229,6 @@ async def get_transactions(data: VerifyOtpRequest):
           viewport={"width": 360, "height": 800},
           is_mobile=True,
       )
-
-      await context.add_cookies(user_sessions[mobile]["cookies"])
       page = await context.new_page()
 
       await page.goto(
@@ -221,19 +238,10 @@ async def get_transactions(data: VerifyOtpRequest):
       )
       await asyncio.sleep(3)
 
-      try:
-        await page.locator("text=Login").first.click()
-        await asyncio.sleep(2)
-      except:
-        pass
-
       input_field = page.locator("input[type='tel']").first
       if await input_field.is_visible():
         await input_field.fill(mobile)
-        get_otp_btn = page.locator("text=Get OTP").first
-        if await get_otp_btn.is_visible():
-          await get_otp_btn.click(force=True)
-        await asyncio.sleep(3)
+        await asyncio.sleep(1)
 
       otp_inputs = page.locator("input[type='tel']")
       count = await otp_inputs.count()
@@ -245,6 +253,46 @@ async def get_transactions(data: VerifyOtpRequest):
         await input_field.fill(otp)
 
       await asyncio.sleep(5)
+
+      # Update storage state after successful login verification
+      updated_state = await context.storage_state()
+      user_sessions[mobile]["storage_state"] = updated_state
+
+      await browser.close()
+    return {"status": "success", "message": "Verified successfully"}
+  except Exception as e:
+    raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/get-transactions")
+async def get_transactions(data: VerifyOtpRequest):
+  mobile = data.mobile
+
+  if mobile not in user_sessions:
+    raise HTTPException(status_code=400, detail="Session not found.")
+
+  try:
+    async with async_playwright() as p:
+      browser = await p.chromium.launch(
+          headless=True, args=["--no-sandbox", "--disable-setuid-sandbox"]
+      )
+      context = await browser.new_context(
+          storage_state=user_sessions[mobile]["storage_state"],
+          user_agent=(
+              "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML,"
+              " like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36"
+          ),
+          viewport={"width": 360, "height": 800},
+          is_mobile=True,
+      )
+      page = await context.new_page()
+
+      await page.goto(
+          "https://www.freecharge.in/services",
+          wait_until="domcontentloaded",
+          timeout=60000,
+      )
+      await asyncio.sleep(4)
 
       hamburger = page.locator(
           "xpath=//header//div[contains(@class, 'flex')]//button | //div[contains(text(), '☰')]"
@@ -300,3 +348,4 @@ async def get_transactions(data: VerifyOtpRequest):
 
   except Exception as e:
     raise HTTPException(status_code=500, detail=str(e))
+            
