@@ -1,11 +1,11 @@
 import asyncio
 from fastapi import FastAPI, HTTPException
+from fastapi.responses import HTMLResponse
 from pydantic import BaseModel
 from playwright.async_api import async_playwright
 
 app = FastAPI()
 
-# Temporary session storage (Production me Redis ya Database use karein)
 user_sessions = {}
 
 
@@ -16,6 +16,123 @@ class SendOtpRequest(BaseModel):
 class VerifyOtpRequest(BaseModel):
   mobile: str
   otp: str
+
+
+@app.get("/", response_class=HTMLResponse)
+async def home():
+  return """
+    <!DOCTYPE html>
+    <html lang="en">
+    <head>
+        <meta charset="UTF-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <title>Freecharge Transaction Viewer</title>
+        <style>
+            body { font-family: Arial, sans-serif; background: #f4f4f9; margin: 0; padding: 20px; display: flex; justify-content: center; }
+            .container { background: #fff; padding: 20px; border-radius: 8px; box-shadow: 0 4px 10px rgba(0,0,0,0.1); width: 100%; max-width: 400px; }
+            h2 { color: #ff6600; text-align: center; }
+            .form-group { margin-bottom: 15px; }
+            label { display: block; margin-bottom: 5px; font-weight: bold; }
+            input { width: 100%; padding: 10px; box-sizing: border-box; border: 1px solid #ccc; border-radius: 4px; font-size: 16px; }
+            button { width: 100%; background: #ff6600; color: white; border: none; padding: 10px; border-radius: 4px; font-size: 16px; cursor: pointer; margin-top: 10px; }
+            button:hover { background: #e05b00; }
+            .hidden { display: none; }
+            .tx-card { background: #fff8f5; border: 1px solid #ffccb3; padding: 10px; margin-top: 10px; border-radius: 4px; font-size: 14px; }
+            #loader { text-align: center; color: #666; margin-top: 10px; display: none; }
+        </style>
+    </head>
+    <body>
+        <div class="container">
+            <h2>Freecharge Transactions</h2>
+            
+            <!-- Step 1: Mobile Number -->
+            <div id="step-mobile" class="form-group">
+                <label>Mobile Number</label>
+                <input type="tel" id="mobile" placeholder="Enter 10 digit number" maxlength="10">
+                <button onclick="sendOtp()">Send OTP</button>
+            </div>
+
+            <!-- Step 2: OTP Verification -->
+            <div id="step-otp" class="form-group hidden">
+                <label>Enter OTP</label>
+                <input type="text" id="otp" placeholder="Enter OTP received">
+                <button onclick="getTransactions()">Verify & Get Transactions</button>
+            </div>
+
+            <div id="loader">Processing in background, please wait...</div>
+
+            <!-- Results -->
+            <div id="results"></div>
+        </div>
+
+        <script>
+            let currentMobile = "";
+
+            async function sendOtp() {
+                currentMobile = document.getElementById("mobile").value;
+                if(currentMobile.length !== 10) {
+                    alert("Please enter a valid 10-digit mobile number");
+                    return;
+                }
+
+                document.getElementById("loader").style.display = "block";
+
+                let res = await fetch("/send-otp", {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({ mobile: currentMobile })
+                });
+                let data = await res.json();
+                
+                document.getElementById("loader").style.display = "none";
+
+                if(res.ok) {
+                    alert(data.message);
+                    document.getElementById("step-mobile").classList.add("hidden");
+                    document.getElementById("step-otp").classList.remove("hidden");
+                } else {
+                    alert("Error: " + data.detail);
+                }
+            }
+
+            async function getTransactions() {
+                let otp = document.getElementById("otp").value;
+                if(!otp) {
+                    alert("Please enter the OTP");
+                    return;
+                }
+
+                document.getElementById("loader").style.display = "block";
+                document.getElementById("results").innerHTML = "";
+
+                let res = await fetch("/get-transactions", {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({ mobile: currentMobile, otp: otp })
+                });
+                let data = await res.json();
+
+                document.getElementById("loader").style.display = "none";
+
+                if(res.ok) {
+                    let html = "<h3>Last Transactions:</h3>";
+                    data.last_5_transactions.forEach(tx => {
+                        html += `<div class="tx-card">
+                            <b>Amount:</b> ${tx.amount || 'N/A'}<br>
+                            <b>Status:</b> ${tx.status || 'N/A'}<br>
+                            <b>Date/Time:</b> ${tx.date_time || 'N/A'}<br>
+                            <b>UTR/ID:</b> ${tx.utr_or_tx_id || 'N/A'}
+                        </div>`;
+                    });
+                    document.getElementById("results").innerHTML = html;
+                } else {
+                    alert("Error: " + data.detail);
+                }
+            }
+        </script>
+    </body>
+    </html>
+    """
 
 
 @app.post("/send-otp")
@@ -43,24 +160,20 @@ async def send_otp(data: SendOtpRequest):
       )
       await asyncio.sleep(3)
 
-      # Login trigger
       try:
         await page.locator("text=Login").first.click()
         await asyncio.sleep(2)
       except:
         pass
 
-      # Mobile number fill karein
       input_field = page.locator("input[type='tel']").first
       await input_field.wait_for(state="visible", timeout=10000)
       await input_field.fill(mobile)
 
-      # Get OTP click
       get_otp_btn = page.locator("text=Get OTP").first
       if await get_otp_btn.is_visible():
         await get_otp_btn.click()
 
-      # Cookies save karein taaki verification ke waqt session bana rahe
       cookies = await context.cookies()
       user_sessions[mobile] = {"cookies": cookies}
 
@@ -100,7 +213,6 @@ async def get_transactions(data: VerifyOtpRequest):
           is_mobile=True,
       )
 
-      # Purana session load karein
       await context.add_cookies(user_sessions[mobile]["cookies"])
       page = await context.new_page()
 
@@ -111,7 +223,6 @@ async def get_transactions(data: VerifyOtpRequest):
       )
       await asyncio.sleep(3)
 
-      # Login popup kholen aur OTP enter karein
       try:
         await page.locator("text=Login").first.click()
         await asyncio.sleep(2)
@@ -124,8 +235,6 @@ async def get_transactions(data: VerifyOtpRequest):
         await page.locator("text=Get OTP").first.click()
         await asyncio.sleep(3)
 
-      # OTP input boxes fill karne ka logic (agar multiple boxes hon ya ek single input ho)
-      # Freecharge OTP inputs ko target karein
       otp_inputs = page.locator("input[type='tel']")
       count = await otp_inputs.count()
       if count > 1:
@@ -135,35 +244,23 @@ async def get_transactions(data: VerifyOtpRequest):
       else:
         await input_field.fill(otp)
 
-      await asyncio.sleep(5)  # Login complete hone ka wait
+      await asyncio.sleep(5)
 
-      # Hamburger menu (☰) par click karein
       hamburger = page.locator(
           "xpath=//header//div[contains(@class, 'flex')]//button | //div[contains(text(), '☰')]"
       ).first
       await hamburger.click()
       await asyncio.sleep(2)
 
-      # 'My Transactions' par click karein
       await page.locator("text=My Transactions").click()
       await asyncio.sleep(4)
 
-      # Transaction history page par top 5 transactions extract karein
-      transaction_elements = page.locator(
-          ".transaction-item-class"
-      )  # DOM structure ke mutabiq selector adjust karein
-      # Har ek transaction par click karke andar ki detail nikalne ka loop:
       detailed_transactions = []
-
-      # List items count (max 5)
-      items = page.locator(
-          "div[class*='transaction'], a[class*='transaction']"
-      )  # Generic list cards
+      items = page.locator("div[class*='transaction'], a[class*='transaction']")
       total_items = await items.count()
       limit = min(5, total_items)
 
       for i in range(limit):
-        # Dobara list page par jaakar index click karna padta hai taaki stale element error na aaye
         await page.goto(
             "https://www.freecharge.in/transactions-history",
             wait_until="domcontentloaded",
@@ -177,22 +274,13 @@ async def get_transactions(data: VerifyOtpRequest):
           await current_items.nth(i).click()
           await asyncio.sleep(3)
 
-          # Detail page se data scrape karna (jaise screenshots me dikhaya gaya hai)
           try:
-            title_text = await page.locator(
-                "div, span"
-            ).all_inner_texts()  // Ya specific selectors
-            # Fields extract karein: Amount, Date/Time, Status, Service Number, UTR/Transaction ID
             amount = await page.locator("text=₹").first.inner_text()
             status = await page.locator(
                 "text=Failed, text=Success"
             ).first.inner_text()
-            date_time = (
-                await page.locator("text=2026").first.inner_text()
-            )  # Example selector
-            utr = await page.locator(
-                "text=OCMR"
-            ).first.inner_text()  # Transaction ID / UTR
+            date_time = await page.locator("text=2026").first.inner_text()
+            utr = await page.locator("text=OCMR").first.inner_text()
 
             detailed_transactions.append({
                 "index": i + 1,
@@ -201,7 +289,7 @@ async def get_transactions(data: VerifyOtpRequest):
                 "date_time": date_time,
                 "utr_or_tx_id": utr,
             })
-          except Exception as ex:
+          except Exception:
             detailed_transactions.append({
                 "index": i + 1,
                 "error": "Could not parse full details",
@@ -212,4 +300,4 @@ async def get_transactions(data: VerifyOtpRequest):
 
   except Exception as e:
     raise HTTPException(status_code=500, detail=str(e))
-      
+        
