@@ -193,7 +193,6 @@ async def send_otp(data: SendOtpRequest):
         await get_otp_btn.click(force=True)
 
       await asyncio.sleep(4)
-      # Save browser state/storage instead of just cookies for proper session restore
       storage_state = await context.storage_state()
       user_sessions[mobile] = {"storage_state": storage_state}
 
@@ -236,25 +235,24 @@ async def verify_otp(data: VerifyOtpRequest):
           wait_until="domcontentloaded",
           timeout=60000,
       )
-      await asyncio.sleep(3)
+      await asyncio.sleep(4)
 
-      input_field = page.locator("input[type='tel']").first
-      if await input_field.is_visible():
-        await input_field.fill(mobile)
-        await asyncio.sleep(1)
-
+      # Safely handle OTP inputs without triggering hard timeouts
       otp_inputs = page.locator("input[type='tel']")
       count = await otp_inputs.count()
-      if count > 1:
+
+      if count > 0:
         for i, digit in enumerate(otp):
           if i < count:
             await otp_inputs.nth(i).fill(digit)
+            await asyncio.sleep(0.3)
       else:
-        await input_field.fill(otp)
+        input_field = page.locator("input").first
+        if await input_field.is_visible():
+          await input_field.fill(otp)
 
       await asyncio.sleep(5)
 
-      # Update storage state after successful login verification
       updated_state = await context.storage_state()
       user_sessions[mobile]["storage_state"] = updated_state
 
@@ -348,4 +346,4 @@ async def get_transactions(data: VerifyOtpRequest):
 
   except Exception as e:
     raise HTTPException(status_code=500, detail=str(e))
-            
+    
