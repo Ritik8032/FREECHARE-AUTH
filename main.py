@@ -168,7 +168,6 @@ async def send_otp(data: SendOtpRequest):
       )
       page = await context.new_page()
 
-      # Only block images and fonts to keep site rendering fast and working properly
       await page.route(
           "**/*",
           lambda route: route.abort()
@@ -312,42 +311,32 @@ async def get_transactions(data: VerifyOtpRequest):
           else route.continue_(),
       )
 
+      # Directly jump to transactions history page using session
       await page.goto(
-          "https://www.freecharge.in/services",
+          "https://www.freecharge.in/transactions-history",
           wait_until="domcontentloaded",
           timeout=30000,
       )
-      await asyncio.sleep(2)
-
-      hamburger = page.locator(
-          "xpath=//header//div[contains(@class, 'flex')]//button | //div[contains(text(), '☰')]"
-      ).first
-      await hamburger.click(force=True)
-      await asyncio.sleep(1)
-
-      await page.locator("text=My Transactions").click(force=True)
-      await asyncio.sleep(2)
+      await asyncio.sleep(3)
 
       detailed_transactions = []
-      items = page.locator("div[class*='transaction'], a[class*='transaction']")
+      items = page.locator(
+          "div[class*='transaction'], a[class*='transaction'],"
+          " div[class*='card']"
+      )
       total_items = await items.count()
       limit = min(5, total_items)
 
       for i in range(limit):
-        await page.goto(
-            "https://www.freecharge.in/transactions-history",
-            wait_until="domcontentloaded",
-        )
-        await asyncio.sleep(1)
+        try:
+          current_items = page.locator(
+              "div[class*='transaction'], a[class*='transaction'],"
+              " div[class*='card']"
+          )
+          if await current_items.count() > i:
+            await current_items.nth(i).click(force=True)
+            await asyncio.sleep(2)
 
-        current_items = page.locator(
-            "div[class*='transaction'], a[class*='transaction']"
-        )
-        if await current_items.count() > i:
-          await current_items.nth(i).click(force=True)
-          await asyncio.sleep(2)
-
-          try:
             amount = page.locator("text=₹").first
             status = page.locator("text=Failed, text=Success").first
             date_time = page.locator("text=2026").first
@@ -376,15 +365,17 @@ async def get_transactions(data: VerifyOtpRequest):
                     else "N/A"
                 ),
             })
-          except Exception:
-            detailed_transactions.append({
-                "index": i + 1,
-                "error": "Could not parse full details",
-            })
+
+            await page.go_back()
+            await asyncio.sleep(1.5)
+        except Exception:
+          detailed_transactions.append(
+              {"index": i + 1, "error": "Could not parse full details"}
+          )
 
       await browser.close()
       return {"status": "success", "last_5_transactions": detailed_transactions}
 
   except Exception as e:
     raise HTTPException(status_code=500, detail=str(e))
-  
+      
